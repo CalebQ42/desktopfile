@@ -2,22 +2,75 @@ package desktopfile
 
 import (
 	"bufio"
+	"errors"
 	"io"
+	"strconv"
+	"strings"
 )
 
 //File a representation of a .desktop file.
 type File struct {
-	rawMap        map[string]*Group
-	DefaultLocale Locale
+	rawMap           map[string]*Group
+	DefaultLocale    Locale
+	BeginningComment string
+	EndingComment    string
 }
 
 //Open reads the .desktop file from an io.Reader.
-func Open(reader io.Reader) *File {
-	file := new(File)
+func Open(reader io.Reader) (*File, error) {
+	file := File{
+		rawMap: make(map[string]*Group),
+	}
 	rdr := bufio.NewReader(reader)
-	_ = rdr
+	lineNum := 0
+	var curGroup *Group
+	var commentTemp string
+	var line string
+	var err error
+	for {
+		lineNum++
+		line, err = rdr.ReadString('\n')
+		if err == io.EOF {
+			err = nil
+			break
+		} else if err != nil {
+			return nil, err
+		}
+		line = strings.TrimSuffix(strings.TrimSpace(line), "\n")
+		if strings.HasPrefix(line, "#") || line == "" {
+			commentTemp += line + "\n"
+			continue
+		} else if strings.Contains(line, "#") {
+			ind := strings.Index(line, "#")
+			commentTemp += line[ind:] + "\n"
+			line = strings.TrimSpace(line[:ind])
+		}
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			group := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, "["), "]"))
+			if _, ok := file.rawMap[group]; !ok {
+				file.rawMap[group] = &Group{
+					entries: make(map[string]*Entry),
+				}
+			}
+			file.rawMap[group].Comment += commentTemp
+			commentTemp = ""
+			curGroup = file.rawMap[group]
+			continue
+		}
+		equLoc := strings.Index(line, "=")
+		if equLoc == -1 {
+			return nil, errors.New("Line " + strconv.Itoa(lineNum) + " is not a key, comment, group header, or whitespace.")
+		} else if curGroup == nil {
+			return nil, errors.New("Line " + strconv.Itoa(lineNum) + " has a key before a group heading.")
+		}
+		key := strings.TrimSpace(line[:equLoc])
+		_ = key
+	}
+	if commentTemp != "" {
+		file.EndingComment = commentTemp
+	}
 	//TODO: parse file
-	return file
+	return &file, nil
 }
 
 //DefaultGroup attempts to return the default Desktop Entry Group.
