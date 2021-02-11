@@ -16,7 +16,8 @@ type Locale struct {
 
 //LocaleFromString creates a Locale from a string (in the format lang_COUNTRY@MODIFIER).
 //If encoding is specified (in the form COUNTRY.ENCODING), it is ignored.
-func LocaleFromString(locale string) (out Locale) {
+func LocaleFromString(locale string) *Locale {
+	var out Locale
 	underInd := strings.Index(locale, "_")
 	atInd := strings.Index(locale, "@")
 	if underInd == -1 && atInd == -1 {
@@ -35,7 +36,7 @@ func LocaleFromString(locale string) (out Locale) {
 	if dotInd := strings.Index(out.Country, "."); dotInd != -1 {
 		out.Country = out.Country[:dotInd]
 	}
-	return
+	return &out
 }
 
 func (l Locale) String() (out string) {
@@ -143,51 +144,80 @@ func (v Value) AsArray() []Value {
 
 //LocaleValue is a value for a Entry with a specific locale.
 type LocaleValue struct {
-	Locale
 	Value   Value
 	Comment string
 }
 
-//Entry represents a entry value pair.
+//Entry represents a key value pair.
 type Entry struct {
-	Comment string
-	Value   Value
-	Locales []*LocaleValue
+	parent      *Group
+	locales     map[Locale]*LocaleValue
+	Comment     string
+	Value       Value
+	localeOrder []Locale
 }
 
-//ValueAtLocale gets the
+//ValueAtLocale gets the closes match to the given locale.
 func (e Entry) ValueAtLocale(l Locale) Value {
-	matchInd := -1
+	var matchedLocal *Locale
 	matchedLang, matchedCountry := false, false
-	for i, lv := range e.Locales {
-		if l.Language != lv.Language {
+	for i, lv := range e.locales {
+		if l.Language != i.Language {
 			continue
 		}
 		if !matchedLang {
 			matchedLang = true
-			matchInd = i
+			matchedLocal = &i
 		}
-		if l.Country != lv.Country {
+		if l.Country != i.Country {
 			continue
 		}
 		if !matchedCountry {
 			matchedCountry = true
-			matchInd = i
+			matchedLocal = &i
 		}
-		if l.Modifier == lv.Modifier {
+		if l.Modifier == i.Modifier {
 			return lv.Value
 		}
 	}
-	if matchInd == -1 {
+	if matchedLocal == nil {
 		return e.Value
 	}
-	return e.Locales[matchInd].Value
+	return e.locales[*matchedLocal].Value
+}
+
+//GetValue gets the value with the file's DefaultLocale (set in it's Options).
+//This is Read-Only, if you want to edit the Entry's value, edit it directly.
+func (e Entry) GetValue() Value {
+	if e.parent.parent.Options.DefaultLocale != nil {
+		return e.ValueAtLocale(*e.parent.parent.Options.DefaultLocale)
+	}
+	return e.Value
+}
+
+//HasLocale returns whether the Entry has the specified locale
+func (e Entry) HasLocale(loc Locale) bool {
+	_, ok := e.locales[loc]
+	return ok
+}
+
+//AddLocale adds the locale to the Entry.
+//If the locale is present, returns that locale's LocaleValue
+func (e *Entry) AddLocale(loc Locale) *LocaleValue {
+	if lv, ok := e.locales[loc]; ok {
+		return lv
+	}
+	e.locales[loc] = &LocaleValue{}
+	e.localeOrder = append(e.localeOrder, loc)
+	return e.locales[loc]
 }
 
 //Group is a set of Entries under a group header.
 type Group struct {
-	entries map[string]*Entry
-	Comment string
+	parent     *File
+	entries    map[string]*Entry
+	Comment    string
+	entryOrder []string
 }
 
 //HasEntry returns if the Group has the given Entry
@@ -207,7 +237,9 @@ func (g Group) GetEntry(key string) *Entry {
 		return e
 	}
 	return &Entry{
-		Locales: make([]*LocaleValue, 0),
+		parent:      &g,
+		locales:     make(map[Locale]*LocaleValue),
+		localeOrder: make([]Locale, 0),
 	}
 }
 
@@ -220,12 +252,30 @@ func (g *Group) AddEntry(key string) *Entry {
 		return e
 	}
 	g.entries[key] = &Entry{
-		Locales: make([]*LocaleValue, 0),
+		parent:      g,
+		locales:     make(map[Locale]*LocaleValue),
+		localeOrder: make([]Locale, 0),
 	}
+	g.entryOrder = append(g.entryOrder, key)
 	return g.entries[key]
 }
 
 //RemoveEntry removes the entry with the given key.
 func (g *Group) RemoveEntry(key string) {
 	delete(g.entries, key)
+	for i, val := range g.entryOrder {
+		if val == key {
+			g.entryOrder = append(g.entryOrder[:i], g.entryOrder[i+1:]...)
+			return
+		}
+	}
+}
+
+func (g Group) String() (out string) {
+	for _, v := range g.entryOrder {
+		entry := g.entries[v]
+		out += v + "=" + entry.Value.String()
+	}
+	out = strings.TrimSuffix(out, "\n")
+	return
 }

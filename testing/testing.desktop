@@ -1,0 +1,10 @@
+#This is a testing file. Used purely for testing puposes
+
+[Desktop Entry]
+Name=Hello World
+#A test for localized text
+Name[en_US]=Hello US
+Description=A test file
+Categories=Testing;Usesless;Golang;
+Exec=not-useful %f
+#END OF FILE
